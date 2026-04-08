@@ -1,28 +1,19 @@
 const express = require("express");
 const axios = require("axios");
-const { GoogleGenerativeAI } = require("@google/generative-ai");
 
 const app = express();
 app.use(express.json());
 
 const PAGE_ACCESS_TOKEN = process.env.PAGE_ACCESS_TOKEN;
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
-const SYSTEM_PROMPT = `អ្នកជា Bot ជំនួយការស្មាតនៅលើ Facebook។
-ឆ្លើយតបជាភាសាខ្មែរ និងភាសាអង់គ្លេស។
-ប្រើ emoji ដែលសមរម្យ។`;
-
-const conversations = {};
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 
 // Webhook Verification
 app.get("/webhook", (req, res) => {
   const mode = req.query["hub.mode"];
   const token = req.query["hub.verify_token"];
   const challenge = req.query["hub.challenge"];
-
   if (mode === "subscribe" && token === VERIFY_TOKEN) {
-    console.log("✅ Webhook verified!");
     res.status(200).send(challenge);
   } else {
     res.sendStatus(403);
@@ -38,33 +29,28 @@ app.post("/webhook", async (req, res) => {
   for (const entry of body.entry) {
     for (const event of entry.messaging) {
       if (!event.message || !event.message.text) continue;
-
       const senderId = event.sender.id;
       const userMsg = event.message.text;
 
-      // Save history
-      if (!conversations[senderId]) conversations[senderId] = [];
-      conversations[senderId].push({ role: "user", parts: [{ text: userMsg }] });
-
       try {
-        const model = genAI.getGenerativeModel({
-          model: "gemini-1.5-flash",
-          systemInstruction: SYSTEM_PROMPT,
-        });
+        // Call Gemini API directly
+        const geminiRes = await axios.post(
+          https://generativelanguage.googleapis.com/v1/models/gemini-pro:generateContent?key=${GEMINI_API_KEY},
+          {
+            contents: [{ parts: [{ text: userMsg }] }]
+          }
+        );
 
-        const chat = model.startChat({ history: conversations[senderId].slice(-10) });
-        const result = await chat.sendMessage(userMsg);
-        const reply = result.response.text();
+        const reply = geminiRes.data.candidates[0].content.parts[0].text;
 
-        conversations[senderId].push({ role: "model", parts: [{ text: reply }] });
-
+        // Send to Messenger
         await axios.post(
           "https://graph.facebook.com/v19.0/me/messages",
           { recipient: { id: senderId }, message: { text: reply } },
           { params: { access_token: PAGE_ACCESS_TOKEN } }
         );
       } catch (err) {
-        console.error("Error:", err.message);
+        console.error("Error:", err.response?.data || err.message);
       }
     }
   }
